@@ -1,1 +1,5 @@
-*.dat
+*dat
+*.sh
+*.csh
+*.so
+__pycache__/
