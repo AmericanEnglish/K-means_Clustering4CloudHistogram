@@ -137,6 +137,7 @@ class K_means:
         """
         Repeat loop until getting converged centroid
         """
+        # Printing is reserved for process 0 only
         print("Start: K={}, ID={}".format(self.knum,self.id_))
         n10=3; nk=2**n10
         print("***** nk= {}".format(nk))
@@ -146,6 +147,7 @@ class K_means:
             ### Assign data to centroid and get new sum (not mean yet)
             cl,outsum=km_mod.assign_and_get_newsum(indata,ctd,nk)
             maxmove=0.; cl_count=[]
+            # Adapt for MPI
             for ic in range(self.knum):
                 idx= cl==ic+1
                 cl_count.append(idx.sum())
@@ -170,6 +172,7 @@ class K_means:
             print("!!!*** Not Converged ***!!!")
             print("** Knum= {}, ID= {}, WCV= N/A".format(self.knum,self.id_))
         else:
+            # WCV Partial Sum with MPI
             wcvsum=km_mod.get_wcv_sum(indata,ctd,cl)
             wcv=wcvsum.sum(axis=0)/np.asfarray(cl_count)
             cf=ctd.sum(axis=0)
@@ -187,6 +190,9 @@ class K_means:
         
         """
         ctd=ctd.T  #[knum,nelem]
+        # Collect centroids from other proceses
+
+        # Everything else is on processes 0 only
         ctd=self._sort_centroid(ctd)
         print('Sorted_CF: ',ctd.sum(axis=1))
 
@@ -196,8 +202,8 @@ class K_means:
                 ctd.tofile(fd)
         elif ftype=='t':
             np.savetxt(fname+'.txt',ctd,fmt='%.8f',delimiter=' ')
-
-        return
+        # Method automatically returns None
+        # return
 
     def _sort_centroid(self,ctd):
         """
