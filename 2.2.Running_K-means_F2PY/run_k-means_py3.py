@@ -1,13 +1,13 @@
 from k_means_class_py3 import K_means
 
-indir = '/data1/djin1/Scratch/'
+indir = '../'
 infile = indir+'aqua_d3_c6_tvp_pcl.noMissing.20050101-20051231_3445612x42.float32.dat'
 
 domain_size = [30,360]
 nelem=42
 nthreads=4
 
-outdir = './CTD/'
+outdir = './'
 outfilehead = outdir+'MODIS_Aqua_b42_TR'
 
 ### Define Object

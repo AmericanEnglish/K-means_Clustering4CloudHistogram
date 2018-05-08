@@ -3,7 +3,7 @@ import sys
 import numpy as np
 from k_means_mod import kmeans_omp_module as km_mod
 
-class K_means(object):
+class K_means:
     """ 
     K-means clustering importing fortran module
 
@@ -24,18 +24,21 @@ class K_means(object):
 
     """
 
-    def __init__(self, domain_size=[180,360],nelem=42,nrec=-999,epsilon=1.e-6):
+    def __init__(self, domain_size=[180,360], nelem=42, nrec=-999, epsilon=1.e-6, comm=None):
         self.domain_size=domain_size
-        self.nelem=nelem
-        self.nelem=nelem
-        self.nrec=nrec
-        self.epsilon=epsilon
+        self.nelem = nelem
+        self.nelem = nelem
+        self.nrec = nrec
+        self.epsilon = epsilon
+        # Required for MPI
+        self.comm = comm
 
     def set_knum_id(self,knum,id_):
-        self.knum=knum
-        self.id_=id_ 
+        self.knum = knum
+        self.id_ = id_ 
        
-    def read_bin_data(self,fname,dtp=np.float32):
+    # Parallel file reading is permitted
+    def read_bin_data(self, fname, dtp=np.float32):
         """ 
         Open a binary file, and read data
         
@@ -43,35 +46,37 @@ class K_means(object):
         dtp   : data type; np.float32 or np.float64, etc. 
         """
         if not os.path.isfile(fname):
-            print("File does not exist:"+fname)
+            print("File does not exist: " + fname)
             sys.exit()
 
-        with open(fname,'rb') as fd:
-            bin_mat = np.fromfile(file=fd,dtype=dtp)
+        with open(fname, 'rb') as fd:
+            bin_mat = np.fromfile(file=fd, dtype=dtp)
 
         return bin_mat
 
-    def initialize(self,indata, num_threads=1):
+    def initialize(self, indata, num_threads=1):
         """
         Initialize:
         1. Initialize input data
         2. Set number of threads for OpenMP
         """
 
-        indata=self._initialize_indata(indata)
+        indata = self._initialize_indata(indata)
         km_mod.set_num_threads(num_threads)
+        
         return indata
 
-    def _initialize_indata(self,indata):
+    def _initialize_indata(self, indata):
         """
         Initialize input data
         1. float32 => float64
         2. reshape
         """
 
-        self.nrec=indata.shape[0]/self.nelem
+        self.nrec = indata.shape[0] / self.nelem
         return indata.reshape([self.nrec,self.nelem]).T.astype(float)
 
+    # Requires adaption for MPI
     def get_initial_ctd(self, indata, ini_ctd_dist_min=0.125):
         """ 
         Return initial centroid to start the K-means iteration
@@ -97,6 +102,7 @@ class K_means(object):
         ncount_per_day=nx*ny*0.87   # 0.87: approximated data ratio, available/(available+missing)
         ntodd=17.   # Unit days: odd number
 
+        # Helps force the centroids to be sparse
         idx=int(ncount_per_day*(ntodd+(self.id_+13.)/(self.id_+37.)))
         ctd=[]
         ctd.append(indata[:,idx])
@@ -125,7 +131,8 @@ class K_means(object):
                 break
 
         return test
-
+    
+    # Requires adaptions for MPI
     def K_means_main(self,indata,ctd,iter_max=999):
         """
         Repeat loop until getting converged centroid
@@ -169,7 +176,8 @@ class K_means(object):
             print("** Knum= {}, ID= {}, Total WCV= {}, LowestCF WCV={}".format(self.knum,self.id_,wcv.sum(),wcv[np.argsort(cf)[0]]))
 
         return ctd
-
+    
+    # Requires adapation for MPI
     def write_centroid(self,fnamehead,ctd,ftype='b'):
         """ 
         Sorting the centroid and then write to a file
