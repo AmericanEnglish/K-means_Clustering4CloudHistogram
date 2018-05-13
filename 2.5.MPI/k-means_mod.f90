@@ -83,9 +83,12 @@ contains
   !!! startRec = each process' record to start mathing at
   !!! stopRec = each process' last record to process
   !!! tcl = Temporary CL which MPI can use for reduce operations
-    integer :: nelem,nrec,nk,ncl,rank,tprocs
+    integer :: nelem,nrec,nk,ncl
     integer :: ii,jj,kk,idx,l_nrec,rem,startRec,stopRec,ierr
-    integer, intent(out) :: cl(nrec), tcl(nrec)
+    integer, intent(in) :: rank,tprocs
+    integer, intent(out) :: cl(nrec)
+    integer :: tcl(nrec)
+
     real(8), intent(in) :: indata(nelem,nrec),ctd(nelem,ncl)
     real(8), intent(out) :: outsum(nelem,ncl)
     real(8) :: mindd,tmpdd
@@ -99,23 +102,25 @@ contains
     tcl = 0
     !!! Calculate the total number of records for each process
     l_nrec = nrec / tprocs
-    rem = nrec % tprocs
-    if (rem == 0)
+    rem = MOD(nrec,  tprocs)
+    if (rem == 0) then
       startRec = l_nrec*rank 
     else 
-      if (rank < rem)
+      if (rank < rem) then
         !!! Pick up an extra record
         startRec = l_nrec*rank + 1
       else
         !!! Accounts for additional records
         startRec = l_nrec*rank + rem
-    
+      endif
+    endif
     !!! Fortran indexes at 1
     startRec = startRec + 1
     stopRec = startRec + l_nrec
 
 
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,tcl,outsum,ncl,nk,nrec,nelem,startRec,stopRec)
+    !!!OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,outsum,ncl,nk,nrec,nelem)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,tcl,outsum,ncl,nk,nelem,startRec,stopRec)
 
     !!!--- Assigning Clusters
 
@@ -150,8 +155,8 @@ contains
     !$OMP SINGLE
     !!! Merge tcl's across all processes into the complete cl
     ! send data, recieve data, entries, datatype, operation, communicator, ierr
-    MPI_ALLREDUCE(tcl, cl, nrec, MPI_DOUBLE_PRECISION, MPI_SUM, 
-    &             MPI_COMM_WORLD, ierr)
+    call MPI_ALLREDUCE(tcl, cl, nrec, MPI_DOUBLE_PRECISION, &
+      MPI_SUM, MPI_COMM_WORLD, ierr)
     !$OMP END SINGLE
     !!! There is an implied barrier using the END clause 
 
@@ -165,7 +170,7 @@ contains
     
     !$OMP DO
     do ii=1,nelem
-       do jj=1,nrec,nk
+       do jj=startRec,stopRec,nk
           outsum(ii,cl(jj))=outsum(ii,cl(jj))+indata(ii,jj)
        enddo
     enddo
