@@ -29,11 +29,11 @@ if km.rank == 0:
 
 ### Loop for several K numbers and different initial coditions
 # num_try=40
-num_try=1
+num_try=40
 # for kk in range(4,6,1):
 # for kk in range(4,11,1):
 km.tick()
-for kk in [4]:
+for kk in range(1,11,1):
     for iid in range(1,num_try+1,1):
         km.set_knum_id(knum=kk,id_=iid)
         ictd=km.get_initial_ctd(indata)
@@ -42,6 +42,7 @@ for kk in [4]:
             print('CF: ',ctd.sum(axis=0))
         if km.rank == 0:
             km.write_centroid(outfilehead,ctd,ftype='b')
+totaltime = km.tock()
 if km.rank == 0:
     print("HH:MM:SS")
-    print(timedelta(seconds=km.tock()))
+    print(timedelta(seconds=totalTime))
