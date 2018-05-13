@@ -69,6 +69,7 @@ contains
     return
   end function calc_dist
 
+
   subroutine &
       assign_and_get_newsum(indata,ctd,nk,cl,outsum,ncl,nelem,nrec,rank,tprocs)
   !!! Calculate sum of data by clusters
@@ -104,22 +105,7 @@ contains
     tcl = 0
 
     !!! Calculate the total number of records for each process
-    l_nrec = nrec / tprocs
-    rem = MOD(nrec,  tprocs)
-    if (rem == 0) then
-      startRec = l_nrec*rank 
-    else 
-      if (rank < rem) then
-        !!! Pick up an extra record
-        startRec = l_nrec*rank + 1
-      else
-        !!! Accounts for additional records
-        startRec = l_nrec*rank + rem
-      endif
-    endif
-    !!! Fortran indexes at 1
-    startRec = startRec + 1
-    stopRec = startRec + l_nrec
+    call get_record_spans(nrec, rank, tprocs, startRec, stopRec)
 
 
     !!!OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,outsum,ncl,nk,nrec,nelem)
@@ -189,14 +175,15 @@ contains
 
   end subroutine assign_and_get_newsum
 
-  subroutine get_wcv_sum(indata,ctd,cl,outsum,ncl,nelem,nrec)
+  subroutine get_wcv_sum(indata,ctd,cl,outsum,ncl,nelem,nrec,rank,tprocs)
   !!! Calculate sum of data by clusters
   !!! Need to get new centroid
     integer :: nelem,nrec,ncl
-    integer :: mm,ii
+    integer :: mm,ii,l_nrec,tprocs,rank,ierr,startRec,stopRec,rem
     integer, intent(in) :: cl(nrec)
     real(8), intent(in) :: indata(nelem,nrec),ctd(nelem,ncl)
     real(8), intent(out) :: outsum(nelem,ncl)
+    real(8) :: toutsum(nelem, ncl)
     !F2PY INTENT(HIDE) :: ncl,nelem,nrec
     !F2PY INTENT(OUT) :: outsum
 
@@ -204,15 +191,46 @@ contains
     !!! Similar story to the previous outsum loop in assign_and_get
     !!! can be parallelized but will require a Reduce call in order
     !!! have the correct numbers inside outsum
-    !$OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(outsum,cl,indata,ctd,nrec,nelem)
+    call get_record_spans(nrec, rank, tprocs, startRec, stopRec)
+    !!! Fortran indexes at 1
+
+    !$OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(toutsum,cl,indata,ctd,nrec,nelem,startRec,stopRec)
     do mm=1,nelem
-       do ii=1,nrec
-          outsum(mm,cl(ii))=outsum(mm,cl(ii))+(indata(mm,ii)-ctd(mm,cl(ii)))**2
+       do ii=startRec,stopRec
+       !do ii=1,nrec
+          toutsum(mm,cl(ii))=toutsum(mm,cl(ii))+(indata(mm,ii)-ctd(mm,cl(ii)))**2
        enddo
     enddo
     !$OMP END PARALLEL DO
+    do ii=1,ncl
+      call MPI_ALLREDUCE(toutsum(:,ii), outsum(:,ii), ncl, MPI_DOUBLE_PRECISION, &
+        MPI_SUM, MPI_COMM_WORLD, ierr)
+    enddo
 
   end subroutine get_wcv_sum
+
+  subroutine get_record_spans(nrec,rank,tprocs,startRec,stopRec)
+    integer :: l_nrec, rem
+    integer, intent(out) :: startRec, stopRec
+    integer, intent(in) :: nrec, rank, tprocs
+    !!! Calculate the total number of records for each process
+    l_nrec = nrec / tprocs
+    rem = MOD(nrec,  tprocs)
+    if (rem == 0) then
+      startRec = l_nrec*rank 
+    else 
+      if (rank < rem) then
+        !!! Pick up an extra record
+        startRec = l_nrec*rank + 1
+      else
+        !!! Accounts for additional records
+        startRec = l_nrec*rank + rem
+      endif
+    endif
+    !!! Fortran indexes at 1
+    startRec = startRec + 1
+    stopRec = startRec + l_nrec
+  end subroutine
 
 
 end module kmeans_omp_module
