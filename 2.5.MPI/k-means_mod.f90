@@ -4,29 +4,29 @@ module kmeans_omp_module
   include 'mpif.h'
 
 contains
-  !!! MPI Wrappers
-  !!! MPI INIT which does NOT pass arguments because of how the wrapper works.
+  !!! Naiive MPI Wrappers
   !!! Comm = MPI_COMM_WORLD to prevent any bad datatype transformations.
   function mpiInit() result(ierr)
     integer :: ierr
-    !F2PY INTENT(out) ierr
+    !F2PY INTENT(OUT) :: ierr
     call MPI_INIT(ierr)
     return 
   end function mpiInit
 
   !!! Get rank
-  function mpiGetRank() result(rank)
+  function mpiGetRank() result(rank) 
     integer :: ierr, rank
-    !F2PY INTENT(out) rank
+    !F2PY INTENT(OUT) :: rank
     call MPI_COMM_RANK (MPI_COMM_WORLD, rank, ierr)
     return
   end function mpiGetRank
 
-  ! Get size
+  !!! Get size
   function mpiGetSize() result(tprocs)
     integer :: ierr, tprocs
-    !F2PY INTENT(out) tprocs
+    !F2PY INTENT(OUT) :: tprocs
     call MPI_COMM_SIZE(MPI_COMM_WORLD, tprocs, ierr)
+    return
   end function mpiGetSize
 
   function set_num_threads(nn) result(nt)
@@ -41,6 +41,7 @@ contains
     print*, "Set Max # of Threads=",nt
   end function set_num_threads
 
+  
   real(8) function calc_sqdist(aa,bb,nn)
   !!! Calculate squared sum of distance
     integer :: nn,ii
