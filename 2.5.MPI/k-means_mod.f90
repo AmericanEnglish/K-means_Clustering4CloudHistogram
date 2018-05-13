@@ -69,7 +69,7 @@ contains
     return
   end function calc_dist
 
-  subroutine
+  subroutine &
       assign_and_get_newsum(indata,ctd,nk,cl,outsum,ncl,nelem,nrec,rank,tprocs)
   !!! Calculate sum of data by clusters
   !!! Need to get new centroid
@@ -91,15 +91,18 @@ contains
 
     real(8), intent(in) :: indata(nelem,nrec),ctd(nelem,ncl)
     real(8), intent(out) :: outsum(nelem,ncl)
+    real(8) :: toutsum(nelem,ncl)
     real(8) :: mindd,tmpdd
     !F2PY INTENT(HIDE) :: ncl,nelem,nrec
     !F2PY INTENT(OUT) :: cl,outsum
     !F2PY INTENT(IN) :: nk
     
     outsum=0.d0
-    !!! 0 out cl, so MPI doesn't cause artifacts
+    toutsum = 0.d0
+    !!! 0 out tcl, so MPI doesn't cause artifacts
     cl = 0
     tcl = 0
+
     !!! Calculate the total number of records for each process
     l_nrec = nrec / tprocs
     rem = MOD(nrec,  tprocs)
@@ -126,8 +129,8 @@ contains
 
     !!! From 1->nrec as 1+n*nk
 
-    !$OMP DO 
     !!!do ii=1,nrec,nk
+    !$OMP DO 
     do ii=startRec,stopRec,nk
        !!! Min distance
        mindd=10000.d0;idx=0
@@ -144,19 +147,18 @@ contains
        endif
        tcl(ii)=idx
     enddo
-
-    
     !$OMP END DO
     !$OMP BARRIER
 
     
-    !!! Do this with only 1 thread for face the consequences of the ultimate
-    !!! race condition
-    !$OMP SINGLE
     !!! Merge tcl's across all processes into the complete cl
+    !!! Do this with only 1 thread
+    !$OMP SINGLE
+    
     ! send data, recieve data, entries, datatype, operation, communicator, ierr
     call MPI_ALLREDUCE(tcl, cl, nrec, MPI_DOUBLE_PRECISION, &
       MPI_SUM, MPI_COMM_WORLD, ierr)
+    
     !$OMP END SINGLE
     !!! There is an implied barrier using the END clause 
 
@@ -170,13 +172,18 @@ contains
     
     !$OMP DO
     do ii=1,nelem
-       do jj=startRec,stopRec,nk
+       !do jj=startRec,stopRec,nk
+       do jj=1,nrec,nk
           outsum(ii,cl(jj))=outsum(ii,cl(jj))+indata(ii,jj)
        enddo
     enddo
     !$OMP END DO
     !print*, outsum,cluster(1000:1100)
     !$OMP END PARALLEL
+    !!! outsum(nelem,cl)
+    !!! 2d data structures need loops if not allocated contiguously
+    !call MPI_ALLREDUCE(toutsum, outsum, , MPI_DOUBLE_PRECISION, &
+      !MPI_SUM, MPI_COMM_WORLD, ierr)
 
   end subroutine assign_and_get_newsum
 
