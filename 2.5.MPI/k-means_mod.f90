@@ -106,17 +106,20 @@ contains
 
     !!! Calculate the total number of records for each process
     call get_record_spans(nrec, rank, tprocs, startRec, stopRec)
-
+    print*,"rank",rank,"tprocs",tprocs,"startRec",startRec,"stopRec",stopRec,"nrec",nrec
 
     !!!OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,outsum,ncl,nk,nrec,nelem)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,tcl,outsum,ncl,nk,nelem,startRec,stopRec)
+    !!!OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,tcl,outsum,ncl,nk,nelem,startRec,stopRec)
 
     !!!--- Assigning Clusters
 
     !!! From 1->nrec as 1+n*nk
 
     !!!do ii=1,nrec,nk
-    !$OMP DO 
+    !!!OMP DO 
+    !!!OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(indata,ctd,cl,tcl,outsum,ncl,nk,nelem,startRec,stopRec)
+    !$OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(indata,ctd,tcl,ncl,nk,nelem,startRec,stopRec)
+    !do ii=1,nrec,nk
     do ii=startRec,stopRec,nk
        !!! Min distance
        mindd=10000.d0;idx=0
@@ -132,20 +135,25 @@ contains
           stop
        endif
        tcl(ii)=idx
+       !cl(ii)=idx
     enddo
-    !$OMP END DO
-    !$OMP BARRIER
+    !$OMP END PARALLEL DO
+    !!!OMP END DO
+    !!!OMP BARRIER
+    !!! Barrier is already implied
 
     
     !!! Merge tcl's across all processes into the complete cl
     !!! Do this with only 1 thread
-    !$OMP SINGLE
+    !!!OMP SINGLE
     
+    !print*,"rank",rank,"tprocs",tprocs,"startRec",startRec,"stopRec",stopRec,"nrec",nrec
     ! send data, recieve data, entries, datatype, operation, communicator, ierr
-    call MPI_ALLREDUCE(tcl, cl, nrec, MPI_DOUBLE_PRECISION, &
+    !cl = tcl
+   call MPI_ALLREDUCE(tcl, cl, nrec, MPI_INTEGER, &
       MPI_SUM, MPI_COMM_WORLD, ierr)
     
-    !$OMP END SINGLE
+    !!!OMP END SINGLE
     !!! There is an implied barrier using the END clause 
 
 
@@ -156,20 +164,26 @@ contains
     !!! if the loop is parallelized via MPI as well
 
     
-    !$OMP DO
+    !!!!OMP DO
+    !!!OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(indata,ctd,cl,outsum,ncl,nk,nelem,startRec,stopRec)
+    !$OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(indata,ctd,cl,toutsum,ncl,nk,nelem,startRec,stopRec)
     do ii=1,nelem
-       do jj=startRec,stopRec,nk
-       !do jj=1,nrec,nk
+       !do jj=startRec,stopRec,nk
+       do jj=1,nrec,nk
           toutsum(ii,cl(jj))=toutsum(ii,cl(jj))+indata(ii,jj)
+          !outsum(ii,cl(jj))=outsum(ii,cl(jj))+indata(ii,jj)
        enddo
     enddo
-    !$OMP END DO
+
+    !$OMP END PARALLEL DO
+    !!!OMP END DO
     !print*, outsum,cluster(1000:1100)
-    !$OMP END PARALLEL
+    !!OMP END PARALLEL
     !!! outsum(nelem,cl)
     !!! 2d data structures need loops if not allocated contiguously
+    !outsum = toutsum
     do ii=1,ncl
-      call MPI_ALLREDUCE(toutsum(:,ii), outsum(:,ii), ncl, MPI_DOUBLE_PRECISION, &
+      call MPI_ALLREDUCE(toutsum(:,ii), outsum(:,ii), ncl, MPI_REAL8, &
         MPI_SUM, MPI_COMM_WORLD, ierr)
     enddo
 
@@ -203,7 +217,7 @@ contains
     enddo
     !$OMP END PARALLEL DO
     do ii=1,ncl
-      call MPI_ALLREDUCE(toutsum(:,ii), outsum(:,ii), ncl, MPI_DOUBLE_PRECISION, &
+      call MPI_ALLREDUCE(toutsum(:,ii), outsum(:,ii), ncl, MPI_REAL, &
         MPI_SUM, MPI_COMM_WORLD, ierr)
     enddo
 
@@ -229,7 +243,7 @@ contains
     endif
     !!! Fortran indexes at 1
     startRec = startRec + 1
-    stopRec = startRec + l_nrec
+    stopRec = startRec + l_nrec - 1
   end subroutine
 
 
