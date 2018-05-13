@@ -172,9 +172,9 @@ contains
     
     !$OMP DO
     do ii=1,nelem
-       !do jj=startRec,stopRec,nk
-       do jj=1,nrec,nk
-          outsum(ii,cl(jj))=outsum(ii,cl(jj))+indata(ii,jj)
+       do jj=startRec,stopRec,nk
+       !do jj=1,nrec,nk
+          toutsum(ii,cl(jj))=toutsum(ii,cl(jj))+indata(ii,jj)
        enddo
     enddo
     !$OMP END DO
@@ -182,8 +182,10 @@ contains
     !$OMP END PARALLEL
     !!! outsum(nelem,cl)
     !!! 2d data structures need loops if not allocated contiguously
-    !call MPI_ALLREDUCE(toutsum, outsum, , MPI_DOUBLE_PRECISION, &
-      !MPI_SUM, MPI_COMM_WORLD, ierr)
+    do ii=1,ncl
+      call MPI_ALLREDUCE(toutsum(:,ii), outsum(:,ii), ncl, MPI_DOUBLE_PRECISION, &
+        MPI_SUM, MPI_COMM_WORLD, ierr)
+    enddo
 
   end subroutine assign_and_get_newsum
 
