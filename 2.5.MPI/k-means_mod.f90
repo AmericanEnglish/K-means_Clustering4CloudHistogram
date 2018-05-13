@@ -1,19 +1,24 @@
 module kmeans_omp_module
   !$ use omp_lib
   implicit none
-  include 'mpif.h'
+  include "mpif.h"
 
 contains
-  !!! Naiive MPI Wrappers
-  !!! Comm = MPI_COMM_WORLD to prevent any bad datatype transformations.
+  
   function mpiInit() result(ierr)
     integer :: ierr
     !F2PY INTENT(OUT) :: ierr
     call MPI_INIT(ierr)
     return 
   end function mpiInit
-
-  !!! Get rank
+  ! Need MPI wall time
+  function mpiwtime() result(seconds)
+      DOUBLE PRECISION :: seconds
+      !F2PY INTENT(OUT) :: seconds
+      seconds = MPI_WTIME()
+      return
+  end function
+  ! Get rank
   function mpiGetRank() result(rank) 
     integer :: ierr, rank
     !F2PY INTENT(OUT) :: rank
@@ -21,27 +26,31 @@ contains
     return
   end function mpiGetRank
 
-  !!! Get size
+  ! Get size
   function mpiGetSize() result(tprocs)
     integer :: ierr, tprocs
     !F2PY INTENT(OUT) :: tprocs
     call MPI_COMM_SIZE(MPI_COMM_WORLD, tprocs, ierr)
     return
   end function mpiGetSize
+  ! Comm = MPI_COMM_WORLD to prevent any bad datatype transformations.
 
   function set_num_threads(nn) result(nt)
     integer :: nn,nt
+    integer :: rank
     !F2PY INTENT(IN) :: nn
     !F2PY INTENT(OUT) :: nt
     
     !$ nt = omp_get_max_threads()
-    print*,"Max # of Threads=",nt
-    !$ call omp_set_num_threads(nn)
-    !$ nt = omp_get_max_threads()
-    print*, "Set Max # of Threads=",nt
+    rank = mpiGetRank()
+    if (rank == 0) then
+        print*,"Max # of Threads=",nt
+        !$ call omp_set_num_threads(nn)
+        !!! nt = omp_get_max_threads()
+        print*, "Set Max # of Threads=",nt
+    endif
   end function set_num_threads
 
-  
   real(8) function calc_sqdist(aa,bb,nn)
   !!! Calculate squared sum of distance
     integer :: nn,ii
@@ -69,63 +78,46 @@ contains
     return
   end function calc_dist
 
-
   subroutine &
       assign_and_get_newsum(indata,ctd,nk,cl,outsum,ncl,nelem,nrec,rank,tprocs)
   !!! Calculate sum of data by clusters
   !!! Need to get new centroid
-  !!! ncl = number of clusters
-  !!! nk = limited number of records to use
-  !!! ii,jj,kk = indexes used during iteration
-  !!! nelem =  number of bins in the histogram
-  !!! nrec = the number of total records in the dataset
-  !!! l_nrec = the number of records that each process should handle
-  !!! rem = remainder
-  !!! startRec = each process' record to start mathing at
-  !!! stopRec = each process' last record to process
-  !!! tcl = Temporary CL which MPI can use for reduce operations
     integer :: nelem,nrec,nk,ncl
-    integer :: ii,jj,kk,idx,l_nrec,rem,startRec,stopRec,ierr
-    integer, intent(in) :: rank,tprocs
+    integer :: ii,jj,kk,idx
     integer, intent(out) :: cl(nrec)
-    integer :: tcl(nrec)
-
     real(8), intent(in) :: indata(nelem,nrec),ctd(nelem,ncl)
     real(8), intent(out) :: outsum(nelem,ncl)
-    real(8) :: toutsum(nelem,ncl)
     real(8) :: mindd,tmpdd
+    !!! MPI VARIABLES
+    integer, intent(in) :: rank, tprocs
+    integer :: startRec, stopRec, ierr
+    integer :: tcl(nrec)
+    real(8) :: toutsum(nelem, ncl)
     !F2PY INTENT(HIDE) :: ncl,nelem,nrec
     !F2PY INTENT(OUT) :: cl,outsum
     !F2PY INTENT(IN) :: nk
-    
-    outsum=0.d0
-    toutsum = 0.d0
-    !!! 0 out tcl, so MPI doesn't cause artifacts
+
     cl = 0
     tcl = 0
 
-    !!! Calculate the total number of records for each process
+    !rank = mpigetrank()
+    !tprocs = mpigetsize()
     call get_record_spans(nrec, rank, tprocs, startRec, stopRec)
-    print*,"rank",rank,"tprocs",tprocs,"startRec",startRec,"stopRec",stopRec,"nrec",nrec
+    !print*,"rank",rank,"tprocs",tprocs,"startRec",startRec,"stopRec",stopRec,"nrec",nrec
 
-    !!!OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,outsum,ncl,nk,nrec,nelem)
-    !!!OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,tcl,outsum,ncl,nk,nelem,startRec,stopRec)
+    outsum=0.d0
+    toutsum=0.d0
 
     !!!--- Assigning Clusters
 
-    !!! From 1->nrec as 1+n*nk
+    ! If OpenMP can split this, so can MPI!
 
-    !!!do ii=1,nrec,nk
-    !!!OMP DO 
-    !!!OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(indata,ctd,cl,tcl,outsum,ncl,nk,nelem,startRec,stopRec)
-    !$OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(indata,ctd,tcl,ncl,nk,nelem,startRec,stopRec)
-    !do ii=1,nrec,nk
+    !$OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(indata,ctd,cl,tcl,outsum,ncl,nk,nrec,nelem,startRec,stopRec)
     do ii=startRec,stopRec,nk
-       !!! Min distance
+    !do ii=1,nrec,nk
        mindd=10000.d0;idx=0
        do kk=1,ncl
-          tmpdd=calc_sqdist(indata(:,ii), ctd(:,kk), nelem)
-          !!! If calculated distance is less than min distance
+          tmpdd=calc_sqdist(indata(:,ii),ctd(:,kk),nelem)
           if (tmpdd.lt.mindd) then
              mindd=tmpdd; idx=kk
           endif
@@ -134,58 +126,30 @@ contains
           print*,"Not assigned",idx,ii,indata(:,ii)
           stop
        endif
-       tcl(ii)=idx
        !cl(ii)=idx
+       tcl(ii)=idx
     enddo
     !$OMP END PARALLEL DO
-    !!!OMP END DO
-    !!!OMP BARRIER
-    !!! Barrier is already implied
-
-    
-    !!! Merge tcl's across all processes into the complete cl
-    !!! Do this with only 1 thread
-    !!!OMP SINGLE
-    
-    !print*,"rank",rank,"tprocs",tprocs,"startRec",startRec,"stopRec",stopRec,"nrec",nrec
-    ! send data, recieve data, entries, datatype, operation, communicator, ierr
-    !cl = tcl
-   call MPI_ALLREDUCE(tcl, cl, nrec, MPI_INTEGER, &
-      MPI_SUM, MPI_COMM_WORLD, ierr)
-    
-    !!!OMP END SINGLE
-    !!! There is an implied barrier using the END clause 
-
-
     !!!--- Sum for New Centroid
-
-    !!! This loop order keeps OpenMP thread safe but will require an MPI reduce
-    !!! to merge all of the histograms back into the correct data structure
-    !!! if the loop is parallelized via MPI as well
-
-    
-    !!!!OMP DO
-    !!!OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(indata,ctd,cl,outsum,ncl,nk,nelem,startRec,stopRec)
-    !$OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(indata,ctd,cl,toutsum,ncl,nk,nelem,startRec,stopRec)
+    !cl = tcl
+    call MPI_ALLREDUCE(tcl, cl, nrec, MPI_INTEGER, &
+      MPI_SUM, MPI_COMM_WORLD, ierr)
+    ! Loop order needs to be swapped for MPI
+    !$OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(indata,ctd,cl,outsum,toutsum,ncl,nk,nrec,nelem, startRec, stopRec)
     do ii=1,nelem
-       !do jj=startRec,stopRec,nk
-       do jj=1,nrec,nk
+       do jj=startRec,stopRec,nk
+       !do jj=1,nrec,nk
           toutsum(ii,cl(jj))=toutsum(ii,cl(jj))+indata(ii,jj)
-          !outsum(ii,cl(jj))=outsum(ii,cl(jj))+indata(ii,jj)
        enddo
     enddo
-
     !$OMP END PARALLEL DO
-    !!!OMP END DO
-    !print*, outsum,cluster(1000:1100)
-    !!OMP END PARALLEL
-    !!! outsum(nelem,cl)
-    !!! 2d data structures need loops if not allocated contiguously
+
     !outsum = toutsum
     do ii=1,ncl
-      call MPI_ALLREDUCE(toutsum(:,ii), outsum(:,ii), ncl, MPI_REAL8, &
+      call MPI_ALLREDUCE(toutsum(:,ii), outsum(:,ii), nelem, MPI_REAL8, &
         MPI_SUM, MPI_COMM_WORLD, ierr)
     enddo
+    !print*, outsum,cluster(1000:1100)
 
   end subroutine assign_and_get_newsum
 
@@ -193,40 +157,44 @@ contains
   !!! Calculate sum of data by clusters
   !!! Need to get new centroid
     integer :: nelem,nrec,ncl
-    integer :: mm,ii,l_nrec,tprocs,rank,ierr,startRec,stopRec,rem
+    integer :: mm,ii
     integer, intent(in) :: cl(nrec)
     real(8), intent(in) :: indata(nelem,nrec),ctd(nelem,ncl)
     real(8), intent(out) :: outsum(nelem,ncl)
+    !!! MPI VARIABLES
     real(8) :: toutsum(nelem, ncl)
+    integer :: startRec, stopRec, ierr
+    integer, intent(in) :: rank, tprocs
     !F2PY INTENT(HIDE) :: ncl,nelem,nrec
     !F2PY INTENT(OUT) :: outsum
 
     outsum=0.d0
-    !!! Similar story to the previous outsum loop in assign_and_get
-    !!! can be parallelized but will require a Reduce call in order
-    !!! have the correct numbers inside outsum
+    toutsum=0.d0
+    !rank = mpigetrank()
+    !tprocs = mpigetsize()
     call get_record_spans(nrec, rank, tprocs, startRec, stopRec)
-    !!! Fortran indexes at 1
-
+    ! Needs to be adapted for MPI
     !$OMP PARALLEL DO DEFAULT(PRIVATE) SHARED(toutsum,cl,indata,ctd,nrec,nelem,startRec,stopRec)
     do mm=1,nelem
-       do ii=startRec,stopRec
-       !do ii=1,nrec
+        do ii=startRec,stopRec
           toutsum(mm,cl(ii))=toutsum(mm,cl(ii))+(indata(mm,ii)-ctd(mm,cl(ii)))**2
        enddo
     enddo
     !$OMP END PARALLEL DO
     do ii=1,ncl
-      call MPI_ALLREDUCE(toutsum(:,ii), outsum(:,ii), ncl, MPI_REAL, &
+      call MPI_ALLREDUCE(toutsum(:,ii), outsum(:,ii), nelem, MPI_REAL8, &
         MPI_SUM, MPI_COMM_WORLD, ierr)
     enddo
 
+    ! An MPI sum would have to happen here
   end subroutine get_wcv_sum
 
   subroutine get_record_spans(nrec,rank,tprocs,startRec,stopRec)
     integer :: l_nrec, rem
     integer, intent(out) :: startRec, stopRec
     integer, intent(in) :: nrec, rank, tprocs
+    !F2PY INTENT(OUT) :: startRec,stopRec
+    !F2PY INTENT(IN)  :: nrec,rank,tprocs
     !!! Calculate the total number of records for each process
     l_nrec = nrec / tprocs
     rem = MOD(nrec,  tprocs)
@@ -235,7 +203,8 @@ contains
     else 
       if (rank < rem) then
         !!! Pick up an extra record
-        startRec = l_nrec*rank + 1
+        l_nrec = l_nrec + 1
+        startRec = rank*l_nrec
       else
         !!! Accounts for additional records
         startRec = l_nrec*rank + rem
@@ -245,6 +214,5 @@ contains
     startRec = startRec + 1
     stopRec = startRec + l_nrec - 1
   end subroutine
-
 
 end module kmeans_omp_module
