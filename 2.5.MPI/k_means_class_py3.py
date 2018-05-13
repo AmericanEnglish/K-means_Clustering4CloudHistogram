@@ -31,12 +31,12 @@ class K_means:
         self.nrec = nrec
         self.epsilon = epsilon
         # Intialize MPI
-        km_mod.mpiInit()
+        km_mod.mpiinit()
         # Get number of processes
-        self.tprocs = km_mod.mpiGetSize()
+        self.tprocs = km_mod.mpigetsize()
         # Get Rank
-        self.rank = km_mod.mpiGetRank()
-        print("Process {} / {}".format(self.rank, self.tprocs))
+        self.rank = km_mod.mpigetrank()
+        self.rank = int(self.rank)
 
     def set_knum_id(self,knum,id_):
         self.knum = knum
@@ -79,8 +79,13 @@ class K_means:
         """
 
         self.nrec = indata.shape[0] / self.nelem
+        self.startRec,self.stopRec = km_mod.get_record_spans(self.nrec,self.rank,self.tprocs)
+        self.startRec,self.stopRec = int(self.startRec),int(self.stopRec)
+        print("[{:03d}] totalRec = {} start = {:08d} stop = {:08d}".format(self.rank, self.nrec, self.startRec, self.stopRec))
         return indata.reshape([self.nrec,self.nelem]).T.astype(float)
-
+    
+    # This needs to be moved back to FORTRAN so that MPI can handle this consistently.
+    # Otherwise it could lead to problems if it ever uses nondeterministic methods
     def get_initial_ctd(self, indata, ini_ctd_dist_min=0.125):
         """ 
         Return initial centroid to start the K-means iteration
@@ -141,23 +146,29 @@ class K_means:
         Repeat loop until getting converged centroid
         """
         # Printing is reserved for process 0 only
-        print("Start: K={}, ID={}".format(self.knum,self.id_))
+        if self.rank == 0:
+            print("Start: K={}, ID={}".format(self.knum,self.id_))
         n10=3; nk=2**n10
-        print("***** nk= {}".format(nk))
+        if self.rank == 0:
+            print("***** nk= {}".format(nk))
         for it in range(iter_max):
-            print("***** {}".format(it+1))
+            if self.rank == 0:
+                print("***** {}".format(it+1))
         
             ### Assign data to centroid and get new sum (not mean yet)
             # cl is the new clusters and ctd are the initial clusters
             # ctd is updated at the end of the iteration
-            cl,outsum=km_mod.assign_and_get_newsum(indata,ctd,nk)
+            # cl,outsum=km_mod.assign_and_get_newsum(indata,ctd,nk,self.rank,self.tprocs)
+            # cl,outsum=km_mod.assign_and_get_newsum(indata,ctd,nk)
+            cl,outsum=km_mod.assign_and_get_newsum(indata,ctd,nk,self.rank,self.tprocs)
             maxmove=0.; cl_count=[]
             for ic in range(self.knum):
                 idx= cl==ic+1
                 cl_count.append(idx.sum())
                 tmpctd=outsum[:,ic]/float(cl_count[-1])
                 move=km_mod.calc_dist(tmpctd,ctd[:,ic])
-                print("* {:02d} {}".format(ic+1,move))
+                if self.rank == 0:
+                    print("* {:02d} {}".format(ic+1,move))
 
                 maxmove=max(maxmove,move)
                 ctd[:,ic]=tmpctd
@@ -166,9 +177,11 @@ class K_means:
                 ### Speeding up trick1
                 ### : using only part of samples in initial stages
                 n10-=1; nk=2**n10
-                print("***** nk is changed to {}".format(nk))
+                if self.rank == 0:
+                    print("***** nk is changed to {}".format(nk))
             elif nk==1 and maxmove < self.epsilon:
-                print("*** Converged ***",it+1)
+                if self.rank == 0:
+                    print("*** Converged ***",it+1)
                 break
 
 
@@ -176,10 +189,12 @@ class K_means:
             print("!!!*** Not Converged ***!!!")
             print("** Knum= {}, ID= {}, WCV= N/A".format(self.knum,self.id_))
         else:
-            wcvsum=km_mod.get_wcv_sum(indata,ctd,cl)
+            # wcvsum=km_mod.get_wcv_sum(indata,ctd,cl,self.rank,self.tprocs)
+            wcvsum=km_mod.get_wcv_sum(indata,ctd,cl,self.rank,self.tprocs)
             wcv=wcvsum.sum(axis=0)/np.asfarray(cl_count)
             cf=ctd.sum(axis=0)
-            print("** Knum= {}, ID= {}, Total WCV= {}, LowestCF WCV={}".format(self.knum,self.id_,wcv.sum(),wcv[np.argsort(cf)[0]]))
+            if self.rank == 0:
+                print("** Knum= {}, ID= {}, Total WCV= {}, LowestCF WCV={}".format(self.knum,self.id_,wcv.sum(),wcv[np.argsort(cf)[0]]))
 
         return ctd
     
@@ -236,5 +251,11 @@ class K_means:
             ctd2=ctd[idx,:].reshape([-1,self.nelem])[xx,:]
             ctd0=np.concatenate((ctd0,ctd2))
         return ctd0
-            
+
+    def tick(self):
+        self.startTime = km_mod.mpiwtime()
+
+    def tock(self):
+        self.endTime = km_mod.mpiwtime()
+        return self.endTime - self.startTime
         
