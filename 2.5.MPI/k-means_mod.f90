@@ -69,7 +69,8 @@ contains
     return
   end function calc_dist
 
-  subroutine assign_and_get_newsum(indata,ctd,nk,cl,outsum,ncl,nelem,nrec)
+  subroutine
+      assign_and_get_newsum(indata,ctd,nk,cl,outsum,ncl,nelem,nrec,rank,tprocs)
   !!! Calculate sum of data by clusters
   !!! Need to get new centroid
   !!! ncl = number of clusters
@@ -77,9 +78,14 @@ contains
   !!! ii,jj,kk = indexes used during iteration
   !!! nelem =  number of bins in the histogram
   !!! nrec = the number of total records in the dataset
-    integer :: nelem,nrec,nk,ncl
-    integer :: ii,jj,kk,idx
-    integer, intent(out) :: cl(nrec)
+  !!! l_nrec = the number of records that each process should handle
+  !!! rem = remainder
+  !!! startRec = each process' record to start mathing at
+  !!! stopRec = each process' last record to process
+  !!! tcl = Temporary CL which MPI can use for reduce operations
+    integer :: nelem,nrec,nk,ncl,rank,tprocs
+    integer :: ii,jj,kk,idx,l_nrec,rem,startRec,stopRec,ierr
+    integer, intent(out) :: cl(nrec), tcl(nrec)
     real(8), intent(in) :: indata(nelem,nrec),ctd(nelem,ncl)
     real(8), intent(out) :: outsum(nelem,ncl)
     real(8) :: mindd,tmpdd
@@ -88,15 +94,36 @@ contains
     !F2PY INTENT(IN) :: nk
     
     outsum=0.d0
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,outsum,ncl,nk,nrec,nelem)
+    !!! 0 out cl, so MPI doesn't cause artifacts
+    cl = 0
+    tcl = 0
+    !!! Calculate the total number of records for each process
+    l_nrec = nrec / tprocs
+    rem = nrec % tprocs
+    if (rem == 0)
+      startRec = l_nrec*rank 
+    else 
+      if (rank < rem)
+        !!! Pick up an extra record
+        startRec = l_nrec*rank + 1
+      else
+        !!! Accounts for additional records
+        startRec = l_nrec*rank + rem
+    
+    !!! Fortran indexes at 1
+    startRec = startRec + 1
+    stopRec = startRec + l_nrec
+
+
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(indata,ctd,cl,tcl,outsum,ncl,nk,nrec,nelem,startRec,stopRec)
 
     !!!--- Assigning Clusters
 
-    !!! If OpenMP can split this, so can MPI!
-
-    !$OMP DO
     !!! From 1->nrec as 1+n*nk
-    do ii=1,nrec,nk
+
+    !$OMP DO 
+    !!!do ii=1,nrec,nk
+    do ii=startRec,stopRec,nk
        !!! Min distance
        mindd=10000.d0;idx=0
        do kk=1,ncl
@@ -110,16 +137,32 @@ contains
           print*,"Not assigned",idx,ii,indata(:,ii)
           stop
        endif
-       cl(ii)=idx
+       tcl(ii)=idx
     enddo
+
+    
     !$OMP END DO
     !$OMP BARRIER
+
+    
+    !!! Do this with only 1 thread for face the consequences of the ultimate
+    !!! race condition
+    !$OMP SINGLE
+    !!! Merge tcl's across all processes into the complete cl
+    ! send data, recieve data, entries, datatype, operation, communicator, ierr
+    MPI_ALLREDUCE(tcl, cl, nrec, MPI_DOUBLE_PRECISION, MPI_SUM, 
+    &             MPI_COMM_WORLD, ierr)
+    !$OMP END SINGLE
+    !!! There is an implied barrier using the END clause 
+
+
     !!!--- Sum for New Centroid
 
     !!! This loop order keeps OpenMP thread safe but will require an MPI reduce
     !!! to merge all of the histograms back into the correct data structure
     !!! if the loop is parallelized via MPI as well
 
+    
     !$OMP DO
     do ii=1,nelem
        do jj=1,nrec,nk
